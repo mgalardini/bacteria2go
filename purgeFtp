@@ -1,0 +1,130 @@
+#!/usr/bin/env python
+
+import os
+import logging
+import json
+
+import numpy as np
+
+from logging import handlers
+
+from bacteria2go.colorlog import ColorFormatter
+from bacteria2go import __version__
+
+__author__ = "Marco Galardini"
+
+def getOptions():
+    import argparse
+
+    # create the top-level parser
+    description = ("Tell which genomes are abnormal, based on genome statistics "+
+                  "and the absence of 16s/IGS data")
+    parser = argparse.ArgumentParser(description = description,
+                                    prog = 'purgeFtp')
+    parser.add_argument('ftpdir', action='store',
+                        help='Genomes directory')
+    parser.add_argument('not16s', action='store', nargs='?',
+                        default=None,
+                        help='16s/IGS absence file (contains the names of the directories)')        
+
+    parser.add_argument('-v', action='count',
+                        default=0,
+                        help='Increase verbosity level')
+    parser.add_argument('--version', action='version',
+                        version='%(prog)s '+__version__)
+
+    return parser.parse_args()
+    
+if __name__ == "__main__":
+    options = getOptions()
+
+    # Log setup
+    logger = logging.getLogger()
+
+    ch = logging.StreamHandler()
+    if options.v == 0:
+        ch.setLevel(logging.INFO)
+    elif options.v >= 1:
+        ch.setLevel(logging.DEBUG)
+    formatter = ColorFormatter('%(asctime)s - $COLOR%(message)s$RESET','%H:%M:%S')
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+
+    logger.setLevel(logging.DEBUG)
+
+    fh = handlers.RotatingFileHandler('purgeFtp.log', maxBytes=2000000)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - [%(levelname)s] - %(message)s',
+                            '%Y-%m-%d %H:%M:%S')
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+   
+    ftpdir = options.ftpdir
+
+    # Start
+    logger.info('Looking into %s'%(options.ftpdir))
+
+    genomes = []
+    filez = os.listdir(options.ftpdir)
+    for f in filter(lambda x: x.endswith('.json'),
+                    os.listdir(ftpdir)):
+        genomes.append( json.load( 
+                                open(os.path.join(
+                                        options.ftpdir,
+                                        f)
+                                ) ) )
+
+    logger.info('Complete genomes: %d'%[x['complete'] for x in genomes].count(True))
+    logger.info('Draft genomes: %d'%[x['complete'] for x in genomes].count(False))
+
+    stats = {'ndna':'# DNA',
+             'ldna':'Length of DNA',
+             'nprot':'# CDS',
+             'lprot':'Length of CDS',
+             'gc':'GC content (%)'}
+
+    for stat, desc in stats.items():
+        data = np.array([x[stat] for x in genomes])
+                                                            
+        m = data.mean()
+        d = data.std()
+        logger.info('\t'.join( [desc] + [str(x) for x in [m, d]]))
+
+    exclude = set()
+
+    tr = {}
+    for stat in stats:
+        data = np.array([x[stat] for x in genomes])
+        
+        ut = data.mean() + (data.std()*3)
+        lt = data.mean() - (data.std()*3)
+        
+        tr[stat] = ut, lt
+        
+    cgenomes = []
+    for x in genomes:
+        for stat in stats:
+            ut = tr[stat][0]
+            lt = tr[stat][1]
+            if x[stat] < ut and x[stat] > lt:
+                continue
+            logger.warning('%s (%s: %.2f, %.2f/%.2f)'%(x['id'],
+                                    stat,
+                                    x[stat], ut, lt))
+            exclude.add(x['id'])
+
+    if options.not16s is not None:
+        for l in open(options.not16s):
+            l = l.strip()
+            if l in [x['id'] for x in genomes]:
+                exclude.add(l)
+        
+    for x in genomes:
+        if x['id'] in exclude:
+            continue
+        cgenomes.append(x)
+        
+    logger.info('Abnormal genomes: %d'%len(exclude))
+    logger.info('Normal genomes: %d'%len(cgenomes))
+
+    for x in exclude:
+        print('%s'%x)

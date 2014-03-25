@@ -1,0 +1,1 @@
+* Use rsync instead of curl

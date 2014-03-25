@@ -1,0 +1,38 @@
+#!/usr/bin/env python
+
+import sys
+from Bio import Phylo
+import itertools
+import numpy as np
+
+if len(sys.argv) < 2:
+    print('USAGE: treeDist NEWICK_TREE')
+    sys.exit(1)
+
+infile = sys.argv[1]
+
+try:
+    t = Phylo.read(infile, 'newick')
+except Phylo.NewickIO.NewickError as e:
+    sys.stderr.write('Could not read tree %s (%s)\n'%(infile, e))
+    sys.exit(1)
+
+d = {}
+for a, b in itertools.combinations(t.get_terminals(), 2):
+    # Remember that Bio.Phylo treats numeric IDs as "confidence"
+    aname = a.name.split('_')[0]
+    bname = b.name.split('_')[0]
+
+    d[aname] = d.get(aname, {})
+    d[aname][bname] = d[aname].get(bname, [])
+    d[aname][bname].append(t.distance(a,b))
+    
+    d[bname] = d.get(bname, {})
+    d[bname][aname] = d[bname].get(aname, [])
+    d[bname][aname].append(t.distance(b,a))
+
+orgs = set(d.keys())
+
+print('\t'.join( [''] + sorted(orgs) ))
+for o in sorted(orgs):
+    print('\t'.join( [o] + [str(np.array(d[o][o1]).mean()) if o1 in d[o] else '0' for o1 in sorted(orgs)] ))

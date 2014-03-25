@@ -1,0 +1,381 @@
+#!/usr/bin/env python
+
+import os
+import logging
+import json
+
+from logging import handlers
+
+from Bio import Entrez
+from Bio import SeqIO
+from Bio.SeqUtils import GC
+
+from bacteria2go.colorlog import ColorFormatter
+from bacteria2go import __version__
+from bacteria2go import Strain
+from bacteria2go.utils import *
+
+__author__ = "Marco Galardini"
+
+curl = 'ftp://ftp.ncbi.nih.gov/genomes/Bacteria/'
+durl = 'ftp://ftp.ncbi.nih.gov/genomes/Bacteria_DRAFT/'
+
+listgenomes = 'curl %s -l -s | grep "%s_%s" > %s'
+listgbk = 'curl %s -l -s | grep gbk > %s'
+listfaa = 'curl %s -l -s | grep faa > %s'
+listfrn = 'curl %s -l -s | grep frn > %s'
+listgbktgz = 'curl %s -l -s | grep gbk.tgz > %s'
+listfaatgz = 'curl %s -l -s | grep faa.tgz > %s'
+listfrntgz = 'curl %s -l -s | grep frn.tgz > %s'
+
+fetchfile = 'curl %s > %s'
+uncompress = 'tar -xvf %s -C %s'
+
+def getOptions():
+    import argparse
+
+    # create the top-level parser
+    description = "Stay up to date with the available genomic sequences of a species"
+    parser = argparse.ArgumentParser(description = description,
+                                    prog = 'ftp2genome')
+    parser.add_argument('species', action='store',
+                        help='Species to track')
+    parser.add_argument('email', action='store',
+                        help='Email (needed by NCBI Entrez)')        
+
+    parser.add_argument('--force', action='store_true',
+                        default=False,
+                        dest='force',
+                        help='Force download of existing files')
+
+    parser.add_argument('--working-dir', action='store',
+                        default='.',
+                        dest='wdir',
+                        help='Working directory')
+    parser.add_argument('-v', action='count',
+                        default=0,
+                        help='Increase verbosity level')
+    parser.add_argument('--version', action='version',
+                        version='%(prog)s '+__version__)
+
+    return parser.parse_args()
+    
+if __name__ == "__main__":
+    options = getOptions()
+
+    # Log setup
+    logger = logging.getLogger()
+
+    ch = logging.StreamHandler()
+    if options.v == 0:
+        ch.setLevel(logging.INFO)
+    elif options.v >= 1:
+        ch.setLevel(logging.DEBUG)
+    formatter = ColorFormatter('%(asctime)s - $COLOR%(message)s$RESET','%H:%M:%S')
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+
+    logger.setLevel(logging.DEBUG)
+
+    fh = handlers.RotatingFileHandler('ftp2Genome.log', maxBytes=2000000)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - [%(levelname)s] - %(message)s',
+                            '%Y-%m-%d %H:%M:%S')
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+   
+    s = options.species.split()
+    genus = s[0]
+    species = s[1]
+
+    Entrez.email = options.email
+
+    # Start
+    logger.info('Searching %s %s in NCBI FTP'%(genus, species))
+
+    cpath = os.path.join(options.wdir, 'complete.txt')
+    if not runCmd(listgenomes%(curl, genus, species, cpath)):
+        logger.error('Could not fetch the complete genomes list')
+        sys.exit(1)
+
+    dpath = os.path.join(options.wdir, 'draft.txt') 
+    if not runCmd(listgenomes%(durl, genus, species, dpath)):
+        logger.error('Could not fetch the draft genomes list')
+        sys.exit(1)
+
+    for l in open(cpath):
+        l = l.strip()
+        
+    complete = set()
+    draft = set()
+
+    for l in open(cpath):
+        complete.add(l.strip())
+    os.remove(cpath)
+
+    for l in open(dpath):
+        draft.add(l.strip())
+    os.remove(dpath)
+
+    logger.info('Found %d strains (%d complete, %d draft)'%(len(complete)+len(draft),
+                                                            len(complete),
+                                                            len(draft)))
+
+    # Collect strain information through Entrez
+    # using the uid at the end of the ftp directory name
+    strains = {}
+
+    logger.info('Collecting taxonomic information on the %d genomes'%
+                (len(complete.union(draft))))
+    i = 0
+    for strain in complete.union(draft):
+        i += 1
+        logger.info('(%d/%d) Fetching NCBI taxonomy for %s'%(
+                                                            i,
+                                         len(complete.union(draft)),
+                                                            strain))
+        
+        strains[strain] = Strain(strain)
+
+        uid = strain.split('uid')[-1]
+        h = Entrez.elink(dbfrom='BioProject', id=uid,
+                         linkname="BioProject_taxonomy")
+        r = Entrez.read(h)
+        # The taxID is not always present... Odd!
+        if len(r[0]['LinkSetDb']) == 0:
+            logger.warning('No taxonomy link available for %s'%strain)
+            taxID = None
+        else:
+            taxID = r[0]['LinkSetDb'][0]['Link'][0]['Id']
+            h = Entrez.efetch(db='taxonomy',
+                              id=taxID)
+            r = Entrez.read(h)
+
+            d = r[0]
+
+            strains[strain].name = d['ScientificName']
+            strains[strain].taxid = taxID
+
+            strains[strain].creation = d['PubDate']
+            strains[strain].updated = d['UpdateDate']
+
+            strains[strain].taxonomy = d['LineageEx']
+
+    logger.info('Collecting the %d complete genomes'%(len(complete)))
+    i = 0
+    for strain in complete:
+        i += 1
+        
+        spath = os.path.join(options.wdir, strain)
+        try:
+            os.mkdir(spath)
+        except:
+            pass
+        
+        logger.info('(%d/%d) Fetching the genome files for %s'%(
+                                                            i,
+                                                            len(complete),
+                                                            strain))
+
+        # Already downloaded?
+        if 'DONE' in os.listdir(spath) and not options.force:
+            logger.warning('Already downloaded! Skipping...')
+            continue
+
+        gpath = os.path.join(options.wdir, 'gbklist.txt')
+        if not runCmd(listgbk%('%s%s/'%(curl, strain), gpath)):
+            logger.error('Could not fetch the genbank files list')
+            sys.exit(1)
+
+        fpath = os.path.join(options.wdir, 'faalist.txt')
+        if not runCmd(listfaa%('%s%s/'%(curl, strain), fpath)):
+            logger.error('Could not fetch the faa files list')
+            sys.exit(1)
+
+        rpath = os.path.join(options.wdir, 'frnlist.txt')
+        if not runCmd(listfrn%('%s%s/'%(curl, strain), rpath)):
+            logger.error('Could not fetch the frn files list')
+            sys.exit(1)
+
+        for dfile in [gpath, fpath, rpath]:
+            for l in open(dfile):
+                f = l.strip()
+                logger.debug('Fetching %s'%f)
+
+                fpath = os.path.join(spath, f)
+                if not runCmd(fetchfile%('%s%s/%s'%(curl, strain, f), fpath)):
+                    logger.error('Could not fetch %s'%f)
+                    sys.exit(1)
+        os.remove(gpath)
+        os.remove(fpath)
+        os.remove(rpath)
+
+        # Drop a file that tells us that all the files have been downloaded
+        f = open(os.path.join(spath, 'DONE'), 'w')
+        f.write('DONE\n')
+        f.close()
+
+    # Draft genome are more complicated, since thare may be zipped genbanks
+    # Or multiple similar genbank, but one without annotations
+    logger.info('Collecting the %d draft genomes'%(len(draft)))
+    i = 0
+    # Strains to be removed due to insufficient annotation
+    remove = set()
+    for strain in draft:
+        i += 1
+        logger.info('(%d/%d) Fetching the genome files for %s'%(
+                                                            i,
+                                                            len(draft),
+                                                            strain))
+        
+        # Already downloaded?
+        if strain in os.listdir(options.wdir):
+            spath = os.path.join(options.wdir, strain)
+            if 'DONE' in os.listdir(spath) and not options.force:
+                logger.warning('Already downloaded! Skipping...')
+                continue
+
+        # Is there any faa.tgz (meaning that there is some annotation)?
+        ftgzpath = os.path.join(options.wdir, 'ftgzlist.txt')
+        # Here we can expect failures if no faa.tgz files are present
+        runCmd(listfaatgz%('%s%s/'%(durl, strain), ftgzpath), True)
+        
+        faatgz = set()
+        for l in open(ftgzpath):
+            l = l.strip()
+            faatgz.add(l.replace('.faa.tgz', ''))    
+        os.remove(ftgzpath)
+
+        # Check also the presence of frn.tgz files (RNA features)
+        rtgzpath = os.path.join(options.wdir, 'rtgzlist.txt')
+        runCmd(listfrntgz%('%s%s/'%(durl, strain), rtgzpath), True)
+
+        frntgz = set()
+        for l in open(rtgzpath):
+            l = l.strip()
+            frntgz.add(l.replace('.frn.tgz', ''))    
+        os.remove(rtgzpath)
+
+        if len(faatgz.union(frntgz)) == 0:
+            logger.warning('(%d/%d) No annotation available for %s'%(
+                                                            i,
+                                                            len(draft),
+                                                            strain))
+            remove.add(strain)
+            continue
+
+        # Fetch the gbz.tgz list, then keep only those w/ annotations
+        gtgzpath = os.path.join(options.wdir, 'gtgzlist.txt')
+        if not runCmd(listgbktgz%('%s%s/'%(durl, strain), gtgzpath)):
+            logger.error('Could not fetch the gbk.tgz files list')
+            sys.exit(1)
+
+        if len(faatgz) > 0:
+            ftgzpath = os.path.join(options.wdir, 'ftgzlist.txt')
+            if not runCmd(listfaatgz%('%s%s/'%(durl, strain), ftgzpath)):
+                logger.error('Could not fetch the faa.tgz files list')
+                sys.exit(1)
+        
+        if len(frntgz) > 0:
+            rtgzpath = os.path.join(options.wdir, 'rtgzlist.txt')
+            if not runCmd(listfrntgz%('%s%s/'%(durl, strain), rtgzpath)):
+                logger.error('Could not fetch the frn.tgz files list')
+                sys.exit(1)
+        
+        spath = os.path.join(options.wdir, strain)
+        try:
+            os.mkdir(spath)
+        except:
+            pass
+
+        for dfile in [gtgzpath, ftgzpath, rtgzpath]:
+            if not os.path.exists(dfile):continue
+            for l in open(dfile):
+                l = l.strip()
+                if dfile == gtgzpath:
+                    if l.replace('.gbk.tgz', '') not in faatgz.union(frntgz):
+                        logger.debug('Skipping unannotated genbank file %s'%l)
+                        continue
+            
+                logger.debug('Fetching %s'%l)
+
+                fpath = os.path.join(spath, l)
+                if not runCmd(fetchfile%('%s%s/%s'%(durl, strain, l), fpath)):
+                    logger.error('Could not fetch %s'%l)
+                    sys.exit(1)
+                # Uncompress the file, then remove the archive
+                logger.debug('Uncompressing %s'%l)
+                if not runCmd(uncompress%(fpath, spath)):
+                    logger.error('Could not uncompress %s'%fpath)
+                    sys.exit(1)
+                os.remove(fpath)
+
+        try:
+            os.remove(gtgzpath)
+            os.remove(ftgzpath)
+            os.remove(rtgzpath)
+        except:
+            pass
+        
+        # Drop a file that tells us that all the files have been downloaded
+        f = open(os.path.join(spath, 'DONE'), 'w')
+        f.write('DONE\n')
+        f.close()
+
+    for strain in remove:
+        draft.remove(strain)
+
+    # Compute statistics, then save a JSON file
+    logging.info('Computing statistics and writing summary files')
+    i = 0
+    for strain in complete.union(draft):
+        i += 1
+        logger.info('(%d/%d) Computing statistics for %s'%(
+                                                            i,
+                                         len(complete.union(draft)),
+                                                            strain))
+        
+        ostrain = strains[strain]
+        if strain in complete:
+            ostrain.complete = True
+        else:
+            ostrain.complete = False
+
+        # Cycle through the GenBank files only
+        spath = os.path.join(options.wdir, strain)
+        ostrain = strains[strain]
+        ostrain.ndna = 0
+        ostrain.ldna = 0
+        ostrain.nprot = 0
+        lprot = set()
+        s1 = None
+        for f in filter(lambda x: x.endswith('.gbk'),
+                        os.listdir(spath)):
+            fpath = os.path.join(spath, f)
+            
+            for s in SeqIO.parse(fpath, 'genbank'):
+                if s1 is None:
+                    s1 = s
+                else:
+                    s1 += s
+                ostrain.ndna += 1
+                ostrain.ldna += len(s)
+                for feat in filter(lambda x: x.type == 'CDS',
+                                   s.features): 
+                    ostrain.nprot += 1
+                    lprot.add(len(feat))
+        if s1 is None:
+            logger.warning('No sequence available for strain %s'%strain)
+        if ostrain.nprot == 0:
+            logger.warning('No CDS annotation available for strain %s'%strain)
+
+        if s1 is not None:
+            ostrain.gc = GC(s1.seq)
+        if len(lprot) > 0:
+            ostrain.lprot = mean(lprot)
+
+        # Generate summary JSON
+        jpath = os.path.join(options.wdir, '%s.json'%strain)
+        logger.debug('Saving genome to %s.json'%strain)
+        f = open(jpath, 'w')
+        f.write(json.dumps(ostrain.toDict()))
+        f.close()

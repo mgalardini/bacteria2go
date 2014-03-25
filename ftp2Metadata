@@ -1,0 +1,109 @@
+#!/usr/bin/env python
+
+import os
+import logging
+import json
+
+from logging import handlers
+
+from Bio import Entrez
+
+from bacteria2go.colorlog import ColorFormatter
+from bacteria2go import __version__
+from bacteria2go import Strain
+from bacteria2go import dict2Strain
+
+__author__ = "Marco Galardini"
+
+def getOptions():
+    import argparse
+
+    # create the top-level parser
+    description = "Fetch metadata from NCBI BioProject"
+    parser = argparse.ArgumentParser(description = description,
+                                    prog = 'ftp2Metadata')
+    parser.add_argument('ftpdir', action='store',
+                        help='Genomes directory')
+    parser.add_argument('email', action='store',
+                        help='Email (needed by NCBI Entrez)')        
+
+    parser.add_argument('--working-dir', action='store',
+                        default='.',
+                        dest='wdir',
+                        help='Working directory')
+    parser.add_argument('-v', action='count',
+                        default=0,
+                        help='Increase verbosity level')
+    parser.add_argument('--version', action='version',
+                        version='%(prog)s '+__version__)
+
+    return parser.parse_args()
+    
+if __name__ == "__main__":
+    options = getOptions()
+
+    # Log setup
+    logger = logging.getLogger()
+
+    ch = logging.StreamHandler()
+    if options.v == 0:
+        ch.setLevel(logging.INFO)
+    elif options.v >= 1:
+        ch.setLevel(logging.DEBUG)
+    formatter = ColorFormatter('%(asctime)s - $COLOR%(message)s$RESET','%H:%M:%S')
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+
+    logger.setLevel(logging.DEBUG)
+
+    fh = handlers.RotatingFileHandler('ftp2Metadata.log', maxBytes=2000000)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - [%(levelname)s] - %(message)s',
+                            '%Y-%m-%d %H:%M:%S')
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+   
+    ftpdir = options.ftpdir
+
+    Entrez.email = options.email
+
+    # Start
+    logger.info('Looking into %s'%(options.ftpdir))
+
+    strains = set()
+    filez = os.listdir(options.ftpdir)
+    for d in filter(lambda x: os.path.isdir(
+                                    os.path.join(ftpdir, x)),
+                    os.listdir(ftpdir)):
+        if 'uid' in d and '%s.json'%d in filez:
+            strains.add(d)
+
+    logger.info('Fetching metadata for %d strains'%len(strains))
+    
+    # First: go through BioProject
+    i = 0
+    for strain in strains:
+        i += 1
+        logger.info('(%d/%d) Fetching metadata for %s'%(i,
+                                                        len(strains),
+                                                        strain))
+        uid = strain.split('uid')[-1]
+        h = Entrez.esummary(db='bioproject', id=uid)
+        r = Entrez.read(h)
+        
+        biop = r['DocumentSummarySet']['DocumentSummary'][0]
+    
+        logger.info('(%d/%d) Updating %s'%(i,
+                                         len(strains),
+                                         strain))
+        
+        sfile = os.path.join(ftpdir, '%s.json'%strain)
+        saved = dict2Strain( json.load(open(sfile)) ) 
+
+        saved.bioproject = biop
+
+        # Generate summary JSON
+        jpath = os.path.join(options.wdir, '%s.json'%strain)
+        logger.debug('Saving genome to %s.json'%strain)
+        f = open(jpath, 'w')
+        f.write(json.dumps(saved.toDict()))
+        f.close()

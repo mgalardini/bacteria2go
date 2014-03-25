@@ -1,0 +1,142 @@
+#!/usr/bin/env python
+
+import sys
+import os
+import re
+
+from logging import handlers
+
+from Bio import SeqIO
+
+from bacteria2go.colorlog import ColorFormatter
+from bacteria2go import __version__
+from bacteria2go.utils import *
+
+__author__ = "Marco Galardini"
+
+def getOptions():
+    import argparse
+
+    # create the top-level parser
+    description = "Extract the 16s from NCBI FTP genbanks"
+    parser = argparse.ArgumentParser(description = description,
+                                    prog = 'ftp216s')
+    parser.add_argument('ftpdir', action='store',
+                        help='FTP directory')
+    parser.add_argument('min', action='store', nargs='?',
+                        default=None,
+                        type=int,
+                        help='IGS minimum length')
+    parser.add_argument('max', action='store', nargs='?',
+                        default=None,
+                        type=int,
+                        help='IGS maximum length')
+
+    parser.add_argument('--working-dir', action='store',
+                        default='.',
+                        dest='wdir',
+                        help='Working directory')
+    parser.add_argument('-v', action='count',
+                        default=0,
+                        help='Increase verbosity level')
+    parser.add_argument('--version', action='version',
+                        version='%(prog)s '+__version__)
+
+    return parser.parse_args()
+    
+if __name__ == "__main__":
+    options = getOptions()
+
+    # Log setup
+    logger = logging.getLogger()
+
+    ch = logging.StreamHandler()
+    if options.v == 0:
+        ch.setLevel(logging.INFO)
+    elif options.v >= 1:
+        ch.setLevel(logging.DEBUG)
+    formatter = ColorFormatter('%(asctime)s - $COLOR%(message)s$RESET','%H:%M:%S')
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+
+    logger.setLevel(logging.DEBUG)
+
+    fh = handlers.RotatingFileHandler('ftp216s.log', maxBytes=2000000)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - [%(levelname)s] - %(message)s',
+                            '%Y-%m-%d %H:%M:%S')
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+   
+    # Start
+    # rRNA magic regex
+    regex = '(.*)16[sS]'    
+    prog = re.compile(regex)
+
+    logger.info('Using /%s/ regex search'%regex)
+    
+    logger.info('Extracting 16s from %s'%(options.ftpdir))
+
+    ftpdir = options.ftpdir
+    logger.info('Genomes w/ no 16s will be written to %s'%
+                os.path.join(options.wdir, 'notfound.txt'))
+    notf = open(os.path.join(options.wdir, 'notfound.txt'), 'w')
+    
+    for d in os.listdir(ftpdir):
+        dpath = os.path.join(ftpdir, d)
+        if not os.path.isdir(dpath):
+            continue
+    
+        # We use the uid as species name
+        org = d.split('uid')[-1]
+
+        i = 0
+        rseqs = []
+
+        for fgbk in filter(lambda x: x.endswith('.gbk'),
+                        os.listdir(dpath)):
+            fpath = os.path.join(dpath, fgbk)
+            
+            logger.debug('Reading %s'%fgbk)
+            for s in SeqIO.parse(fpath, 'genbank'):
+                rRNA = sorted(filter(lambda x: x.type == 'rRNA', s.features),
+                              key=lambda x: int(x.location.start))
+                for f in rRNA:
+                    # Is it 16S?
+                    if not prog.match(f.qualifiers['product'][0]):
+                        continue
+
+                    i += 1
+                    rid = '%s_%d'%(org, i)
+            
+                    rseq = s[int(f.location.start): int(f.location.end)+1]
+                    if f.strand < 0:
+                        rseq = rseq.reverse_complement()
+                        rseq.description = '(%s, %d, %d, -)'%(s.id,
+                            int(f.location.start), int(f.location.end)+1)
+                    else:
+                        rseq.description = '(%s, %d, %d, +)'%(s.id,
+                            int(f.location.start), int(f.location.end)+1)    
+                    rseq.id = rid
+                    
+                    if options.min is not None and options.max is not None:
+                        if len(rseq) > options.max or len(rseq) < options.min:
+                            logger.warning('Discarding 16s based on length constraints')
+                            i -= 1
+                            continue
+                    if 'N' in rseq.seq:
+                        logger.warning('N nucleotide found, skipping this sequence')
+                        i -= 1
+                        continue
+            
+                    rseqs.append(rseq)
+            
+        if len(rseqs) == 0:
+            logger.warning('No 16s found for %s'%d)
+            notf.write('%s\n'%d)
+            continue
+    
+        logger.info('Found %d 16s in %s'%(len(rseqs), d))
+        fout = os.path.join(options.wdir, '%s.16s.fna'%d)
+        SeqIO.write(rseqs, fout, 'fasta')
+
+    notf.close()
