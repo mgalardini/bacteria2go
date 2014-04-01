@@ -6,10 +6,14 @@ import itertools
 import numpy as np
 
 if len(sys.argv) < 2:
-    print('USAGE: treeDist NEWICK_TREE')
+    print('USAGE: treeDist NEWICK_TREE [CONVERT]')
     sys.exit(1)
 
 infile = sys.argv[1]
+if len(sys.argv) > 2:
+    convert = True
+else:
+    convert = False
 
 try:
     t = Phylo.read(infile, 'newick')
@@ -19,9 +23,13 @@ except Phylo.NewickIO.NewickError as e:
 
 d = {}
 for a, b in itertools.combinations(t.get_terminals(), 2):
-    # Remember that Bio.Phylo treats numeric IDs as "confidence"
-    aname = a.name.split('_')[0]
-    bname = b.name.split('_')[0]
+    if convert:
+        aname = a.name.split('_')[-1].split('uid')[-1]
+        bname = b.name.split('_')[-1].split('uid')[-1]
+    else:
+        # Remember that Bio.Phylo treats numeric IDs as "confidence"
+        aname = a.name.split('_')[0]
+        bname = b.name.split('_')[0]
 
     d[aname] = d.get(aname, {})
     d[aname][bname] = d[aname].get(bname, [])
