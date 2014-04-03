@@ -20,6 +20,10 @@ def getGeneRefs(group):
         for rid in getGeneRefs(subgroup):
             yield rid
 
+    for subgroup in group.get_paralogGroup():
+        for rid in getGeneRefs(subgroup):
+            yield rid
+
     for r in group.get_geneRef():
         yield r.id
 
