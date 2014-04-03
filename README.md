@@ -13,6 +13,7 @@ Dependencies
 
 * NumPy
 * BioPython
+* orthoxml.py (https://github.com/jhcepas/phylogenetic-XML-python-parsers[available here])
 
 * An internet connection (for some scripts accessing NCBI)
 * A UNIX environment (for ftp2faa)
@@ -31,3 +32,5 @@ Scripts description
 * ftp2faa: Convert faa files downloaded from NCBI FTP into a single faa file
 * purgeFtp: Tell which genomes are abnormal, based on genome statistics and the absence of 16s/IGS data
 * treeDist: Create a distance matrix from Newick trees
+* omag2tsv: Convert OMA plain "OrthologousGroups" text files into a pangenome tsv file
+* omah2tsv: Convert OMA orthoxml files into a pangenome tsv file
