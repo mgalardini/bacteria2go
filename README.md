@@ -14,6 +14,7 @@ Dependencies
 * NumPy
 * BioPython
 * orthoxml.py (https://github.com/jhcepas/phylogenetic-XML-python-parsers[available here])
+* BeautifulSoup v4 (for ftp2Metadata)
 
 * An internet connection (for some scripts accessing NCBI)
 * A UNIX environment (for ftp2faa)

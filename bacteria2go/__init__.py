@@ -30,6 +30,7 @@ class Strain(object):
 
         self.taxonomy = None
         self.bioproject = None
+        self.gold = None
 
         self.creation = None
         self.updated = None
@@ -69,6 +70,7 @@ class Strain(object):
         d['taxid'] = self.taxid
         d['taxonomy'] = self.taxonomy
         d['bioproject'] = self.bioproject
+        d['gold'] = self.gold
         d['creation'] = self.creation
         d['updated'] = self.updated
 

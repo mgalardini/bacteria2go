@@ -3,6 +3,11 @@
 import os
 import logging
 import json
+try:
+    from urllib2 import urlopen
+except ImportError:
+    # Python 3
+    from urlilib.request import urlopen
 
 from logging import handlers
 
@@ -12,6 +17,7 @@ from bacteria2go.colorlog import ColorFormatter
 from bacteria2go import __version__
 from bacteria2go import Strain
 from bacteria2go import dict2Strain
+from bacteria2go.gold import mineGold
 
 __author__ = "Marco Galardini"
 
@@ -71,15 +77,12 @@ if __name__ == "__main__":
 
     strains = set()
     filez = os.listdir(options.ftpdir)
-    for d in filter(lambda x: os.path.isdir(
-                                    os.path.join(ftpdir, x)),
+    for d in filter(lambda x: x.endswith('.json'),
                     os.listdir(ftpdir)):
-        if 'uid' in d and '%s.json'%d in filez:
-            strains.add(d)
+        strains.add(d.split('.')[0])
 
     logger.info('Fetching metadata for %d strains'%len(strains))
     
-    # First: go through BioProject
     i = 0
     for strain in strains:
         i += 1
@@ -87,18 +90,36 @@ if __name__ == "__main__":
                                                         len(strains),
                                                         strain))
         uid = strain.split('uid')[-1]
+        
+        # First: go through BioProject
         h = Entrez.esummary(db='bioproject', id=uid)
         r = Entrez.read(h)
         
         biop = r['DocumentSummarySet']['DocumentSummary'][0]
     
+        # Second: painfully go through GOLD
+        # No defined API, just good old web scraping
+        # Fetch the NCBI taxonomy 
+        sfile = os.path.join(ftpdir, '%s.json'%strain)
+        saved = dict2Strain( json.load(open(sfile)) ) 
+        
+        txid = saved.taxid
+
+        # Get the LinksOut from NCBI taxonomy
+        h = Entrez.elink(dbfrom='taxonomy', id=txid, cmd='llinks')
+        r = Entrez.read(h)
+        # Filter GOLD
+        gold_nugget = None
+        for obj in r[0]['IdUrlList']['IdUrlSet'][0]['ObjUrl']:
+            if obj['Provider']['NameAbbr'] == 'GOLD':
+                url = obj['Url']
+                gold_nugget = mineGold(''.join(urlopen(url).readlines()))
+
         logger.info('(%d/%d) Updating %s'%(i,
                                          len(strains),
                                          strain))
         
-        sfile = os.path.join(ftpdir, '%s.json'%strain)
-        saved = dict2Strain( json.load(open(sfile)) ) 
-
+        saved.gold = gold_nugget
         saved.bioproject = biop
 
         # Generate summary JSON
