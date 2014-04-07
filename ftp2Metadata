@@ -112,8 +112,11 @@ if __name__ == "__main__":
         gold_nugget = None
         for obj in r[0]['IdUrlList']['IdUrlSet'][0]['ObjUrl']:
             if obj['Provider']['NameAbbr'] == 'GOLD':
+                # There may be more than one GOLD links
+                # Just pick the first nugget
                 url = obj['Url']
                 gold_nugget = mineGold(''.join(urlopen(url).readlines()))
+                break
 
         logger.info('(%d/%d) Updating %s'%(i,
                                          len(strains),
