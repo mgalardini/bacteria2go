@@ -19,9 +19,11 @@ def mineGold(shtml):
         try:
             for trow in t.findAll('tr')[1:]:
                 column = trow.findAll('th')[1].text
+                # Clean the &nbsp; mess
+                column = column.replace('&nbsp;', '')
+
                 value = trow.findAll('td')[0].text
-                if value == '&nbsp;':
-                    value = ''
+                value = value.replace('&nbsp;', '')
 
                 d[title][column] = value
         except:
