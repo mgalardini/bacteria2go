@@ -1,0 +1,94 @@
+#!/usr/bin/env python
+
+import sys
+import logging
+
+from logging import handlers
+
+from Bio import SwissProt
+
+from bacteria2go.colorlog import ColorFormatter
+from bacteria2go import __version__
+
+__author__ = "Marco Galardini"
+
+def getOptions():
+    import argparse
+
+    # create the top-level parser
+    description = ("Takes a stream from uniprot flat files and outputs some annotations")
+    parser = argparse.ArgumentParser(description = description)
+    parser.add_argument('refseqs', action="store",
+                        help='RefSeq protein IDs file')
+    parser.add_argument('crossIDs', action="store",
+                        help='Cross references IDs file')
+    parser.add_argument('out', action="store",
+                        help='Output file')
+
+    parser.add_argument('-v', action='count',
+                        default=0,
+                        help='Increase verbosity level')
+    parser.add_argument('--version', action='version',
+                        version='%(prog)s '+__version__)
+
+    return parser.parse_args()
+
+if __name__ == "__main__":
+    options = getOptions()
+
+    # Log setup
+    logger = logging.getLogger()
+
+    ch = logging.StreamHandler()
+    if options.v == 0:
+        ch.setLevel(logging.INFO)
+    elif options.v >= 1:
+        ch.setLevel(logging.DEBUG)
+    formatter = ColorFormatter('%(asctime)s - $COLOR%(message)s$RESET','%H:%M:%S')
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+
+    logger.setLevel(logging.DEBUG)
+
+    fh = handlers.RotatingFileHandler('getUniprot.log', maxBytes=2000000)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - [%(levelname)s] - %(message)s',
+                            '%Y-%m-%d %H:%M:%S')
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+
+    # Start
+    refseq = set()
+
+    for l in open(options.refseqs):
+        refseq.add(l.strip())
+    logger.info('Looking for %d entries'%len(refseq))
+
+    cross = set()
+
+    for l in open(options.crossIDs):
+        cross.add(l.strip())
+    logger.info('Looking for %d cross-references types'%len(cross))
+
+    logger.warning('Reading Uniprot flat-file... This may take a long time...')
+    f = open(options.out, 'w')
+    logger.info('Saving to %s'%options.out)
+    
+    found = set()
+    for record in SwissProt.parse(sys.stdin):
+        # First check if this is in our list
+        rids = set(filter(lambda x: x in refseq,
+                            [x[1] for x in filter(lambda x: x[0] == 'RefSeq',
+                                                   record.cross_references)]))
+
+        if len(rids) == 0:
+            continue
+
+        for r in rids:
+            found.add(r)
+            for t in filter(lambda x: x[0] in cross, record.cross_references):
+                f.write('\t'.join([r, record.entry_name] + list(t)))
+                f.write('\n')
+
+f.close()
+logger.info('Input entries: %d'%len(refseq))
+logger.info('Found entries: %d'%len(found))
