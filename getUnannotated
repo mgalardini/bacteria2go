@@ -1,0 +1,97 @@
+#!/usr/bin/env python
+
+import sys
+import logging
+
+from logging import handlers
+
+from bacteria2go.colorlog import ColorFormatter
+from bacteria2go import __version__
+
+__author__ = "Marco Galardini"
+
+def getOptions():
+    import argparse
+
+    # create the top-level parser
+    description = ("Which OGs miss annotations from Uniprot?")
+    parser = argparse.ArgumentParser(description = description)
+    parser.add_argument('pangenome', action="store",
+                        help='Pangenome tsv file')
+    parser.add_argument('crossfile', action="store",
+                        help='Cross references file (RefSeq Uniprot CrossID ...)')
+    parser.add_argument('-c', '--cross', action="append",
+                        dest='cross',
+                        help='Cross references')
+
+    parser.add_argument('-v', action='count',
+                        default=0,
+                        help='Increase verbosity level')
+    parser.add_argument('--version', action='version',
+                        version='%(prog)s '+__version__)
+
+    return parser.parse_args()
+
+if __name__ == "__main__":
+    options = getOptions()
+
+    # Log setup
+    logger = logging.getLogger()
+
+    ch = logging.StreamHandler()
+    if options.v == 0:
+        ch.setLevel(logging.INFO)
+    elif options.v >= 1:
+        ch.setLevel(logging.DEBUG)
+    formatter = ColorFormatter('%(asctime)s - $COLOR%(message)s$RESET','%H:%M:%S')
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+
+    logger.setLevel(logging.DEBUG)
+
+    fh = handlers.RotatingFileHandler('getUnannotated.log', maxBytes=2000000)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - [%(levelname)s] - %(message)s',
+                            '%Y-%m-%d %H:%M:%S')
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+
+    # Start
+    logger.info('Parsing pangenome (%s)'%options.pangenome)
+
+    p2og = {}
+    for l in open(options.pangenome):
+        if l.strip().startswith('#'):
+            continue
+
+        orth, prot, org = l.strip().split('\t')
+        ref = prot.split('|')[3]
+
+        p2og[ref] = orth
+
+    ogs = set(p2og.values())
+    total = len(ogs)
+
+    logger.info('Looking for %d cross-reference IDs'%len(options.cross))
+    logger.info('Reading cross-reference file (%s)'%options.crossfile)
+
+    for l in open(options.crossfile):
+        s = l.strip().split('\t')
+
+        ref, uni, cross = s[:3]
+        if cross not in options.cross:
+            continue
+        try:
+            og = p2og[ref]
+        except KeyError:
+            continue
+
+        # Remove this OG
+        try:
+            ogs.remove(og)
+        except KeyError:
+            pass
+
+    # Output the results
+    logging.info('Number of OGs with no annotation: %d/%d'%(len(ogs), total))
+    for g in ogs:
+        print(g)

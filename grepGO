@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# Take the output of an interproscan run and print Gene/GOs associations
+
+if [ "$#" -lt 1 ]; then
+    echo 'grepGO IPRSCANOUT'
+    exit 65
+fi
+
+IPR=$1
+
+for i in $(awk -F'\t' '{print $1"__"$NF}' $IPR | grep GO)
+do
+    gene=$(echo $i | awk -F'__' '{print $1}')
+    for go in $(echo $i | awk -F '__' '{print $2}' | sed 's/|/ /g')
+    do
+        echo $gene $go
+    done
+done

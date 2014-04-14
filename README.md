@@ -35,3 +35,7 @@ Scripts description
 * treeDist: Create a distance matrix from Newick trees
 * omag2tsv: Convert OMA plain "OrthologousGroups" text files into a pangenome tsv file
 * omah2tsv: Convert OMA orthoxml files into a pangenome tsv file
+* getUniprot: get cross-references from Uniprot flat files
+* getUnannotated: get OGs that lack Uniprot cross-reference IDs
+* og2faa: pangenome to protein fasta files
+* grepGO: parse Interproscan files and get GO terms
