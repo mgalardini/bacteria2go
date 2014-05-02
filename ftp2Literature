@@ -1,0 +1,157 @@
+#!/usr/bin/env python
+
+import os
+import logging
+import json
+
+from logging import handlers
+
+from Bio import Entrez
+
+from bacteria2go.colorlog import ColorFormatter
+from bacteria2go import __version__
+from bacteria2go.utils import *
+
+__author__ = "Marco Galardini"
+
+curl = 'ftp://ftp.ncbi.nih.gov/genomes/Bacteria/'
+durl = 'ftp://ftp.ncbi.nih.gov/genomes/Bacteria_DRAFT/'
+
+listgenomes = 'curl %s -l -s | grep "%s_%s" > %s'
+
+def getOptions():
+    import argparse
+
+    # create the top-level parser
+    description = "Get the pubmed entries related to a bacterial species from the NCBI FTP"
+    parser = argparse.ArgumentParser(description = description,
+                                    prog = 'ftp2Literature')
+    parser.add_argument('species', action='store',
+                        help='Species to track')
+    parser.add_argument('email', action='store',
+                        help='Email (needed by NCBI Entrez)')        
+
+    parser.add_argument('--working-dir', action='store',
+                        default='.',
+                        dest='wdir',
+                        help='Working directory')
+    parser.add_argument('-v', action='count',
+                        default=0,
+                        help='Increase verbosity level')
+    parser.add_argument('--version', action='version',
+                        version='%(prog)s '+__version__)
+
+    return parser.parse_args()
+    
+if __name__ == "__main__":
+    options = getOptions()
+
+    # Log setup
+    logger = logging.getLogger()
+
+    ch = logging.StreamHandler()
+    if options.v == 0:
+        ch.setLevel(logging.INFO)
+    elif options.v >= 1:
+        ch.setLevel(logging.DEBUG)
+    formatter = ColorFormatter('%(asctime)s - $COLOR%(message)s$RESET','%H:%M:%S')
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+
+    logger.setLevel(logging.DEBUG)
+
+    fh = handlers.RotatingFileHandler('ftp2Literature.log', maxBytes=2000000)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - [%(levelname)s] - %(message)s',
+                            '%Y-%m-%d %H:%M:%S')
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+   
+    s = options.species.split()
+    genus = s[0]
+    species = s[1]
+
+    Entrez.email = options.email
+
+    # Start
+    logger.info('Searching %s %s in NCBI FTP'%(genus, species))
+
+    cpath = os.path.join(options.wdir, 'complete.txt')
+    if not runCmd(listgenomes%(curl, genus, species, cpath)):
+        logger.error('Could not fetch the complete genomes list')
+        sys.exit(1)
+
+    dpath = os.path.join(options.wdir, 'draft.txt') 
+    if not runCmd(listgenomes%(durl, genus, species, dpath)):
+        logger.error('Could not fetch the draft genomes list')
+        sys.exit(1)
+
+    complete = set()
+    draft = set()
+
+    for l in open(cpath):
+        complete.add(l.strip())
+    os.remove(cpath)
+
+    for l in open(dpath):
+        draft.add(l.strip())
+    os.remove(dpath)
+
+    logger.info('Found %d strains (%d complete, %d draft)'%(len(complete)+len(draft),
+                                                            len(complete),
+                                                            len(draft)))
+
+    # Collect literature information through Entrez
+    # using the uid at the end of the ftp directory name
+    lit2gen = {}
+    clit = 0
+    dlit = 0
+
+    logger.info('Collecting taxonomic information on the %d genomes'%
+                (len(complete.union(draft))))
+    i = 0
+    for strain in complete.union(draft):
+        i += 1
+
+        logger.info('(%d/%d) Fetching NCBI taxonomy for %s'%(
+                                                            i,
+                                         len(complete.union(draft)),
+                                                            strain))
+        
+        uid = strain.split('uid')[-1]
+        h = Entrez.elink(dbfrom='BioProject', id=uid,
+                         linkname="BioProject_pubmed")
+        r = Entrez.read(h)
+        if len(r[0]['LinkSetDb']) == 0:
+            logger.warning('No literature link available for %s'%strain)
+            taxID = None
+        else:
+            logger.info('Found %d literature links for %s'%(len(r[0]['LinkSetDb'][0]['Link']),
+                                                               strain))
+            for lit in r[0]['LinkSetDb'][0]['Link']:
+                if strain in complete:
+                    clit += 1
+                else:
+                    dlit += 1
+                
+                lit2gen[ lit['Id'] ] = lit2gen.get(lit['Id'], set())
+                lit2gen[ lit['Id'] ].add( strain )
+
+    # Sort by number of strains, print some details about the articles
+    logger.info( 'Printing out the article/genome details' )
+    for lit in sorted(lit2gen, key=lambda x: len(lit2gen[x]))[::-1]:
+        # Fetch article details
+        h = Entrez.efetch(db="pubmed", id=lit, retmode='xml')
+        r = Entrez.read( h )
+
+        try:
+            a = r[0]['MedlineCitation']['Article']
+            b = a['ArticleDate'][0]['Year']
+            c = a['ArticleTitle']
+            d = a['Journal']['Title']
+            print( '\t'.join( (lit, a['ArticleDate'][0]['Year'],
+                               a['ArticleTitle'],
+                               a['Journal']['Title']) ) )
+        except:
+            print( lit )
+        for strain in lit2gen[ lit ]:
+            print( '\t'.join( ('', strain) ) )
