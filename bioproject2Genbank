@@ -94,7 +94,7 @@ if __name__ == "__main__":
             r = Entrez.read( h )
             name = r[0]['ScientificName']
             # Generate a fake NCBI FTP name
-            ncbiname = name.replace(' ', '_') + '_uid' + bid
+            ncbiname = name.replace(' ', '_').replace('/','_')+ '_uid' + bid
         except Exception as e:
             logger.warning('Could not fetch taxonomy info for %s'%bid)
             logger.warning(e)
