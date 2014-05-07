@@ -69,6 +69,11 @@ if __name__ == "__main__":
     # Start
     logger.info('Searching %d entries in NCBI BioProject'%(len(bids)))
 
+    logger.info('Failures will be logged to %s'%(os.path.join(
+                                                        options.wdir, 'failed.txt')))
+
+    failed = open( os.path.join(options.wdir, 'failed.txt'), 'w' )
+
     i = 0
     for bid in bids:
         i += 1
@@ -93,6 +98,7 @@ if __name__ == "__main__":
         except Exception as e:
             logger.warning('Could not fetch taxonomy info for %s'%bid)
             logger.warning(e)
+            failed.write( '%s\n'%bid )
             continue
 
         # Second, fetch all the available genbanks
@@ -139,5 +145,6 @@ if __name__ == "__main__":
         except Exception as e:
             logger.warning('Could not fetch GenBank info for %s'%bid)
             logger.warning(e)
+            failed.write( '%s\n'%bid )
             continue
-
+    failed.close()
