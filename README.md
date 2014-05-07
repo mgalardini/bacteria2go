@@ -32,6 +32,8 @@ Scripts description
 * ftp216s: Extract the 16s from NCBI FTP genbanks
 * ftp2IGS: Extract the IGS spacer(s) from NCBI FTP genbanks
 * ftp2faa: Convert faa files downloaded from NCBI FTP into a single faa file
+* bioproject2Genbank: fetch Genbank files from BioProject IDs
+    * Some bioproject IDs are not (yet) present in the NCBI FTP
 * purgeFtp: Tell which genomes are abnormal, based on genome statistics and the absence of 16s/IGS data
 * treeDist: Create a distance matrix from Newick trees
 * omag2tsv: Convert OMA plain "OrthologousGroups" text files into a pangenome tsv file

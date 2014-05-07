@@ -1,0 +1,143 @@
+#!/usr/bin/env python
+
+import os
+import logging
+
+from logging import handlers
+
+from Bio import Entrez
+
+from bacteria2go.colorlog import ColorFormatter
+from bacteria2go import __version__
+from bacteria2go.utils import *
+
+__author__ = "Marco Galardini"
+
+def getOptions():
+    import argparse
+
+    # create the top-level parser
+    description = "From a list of NCBI BioProject IDs get GenBank files"
+    parser = argparse.ArgumentParser(description = description,
+                                    prog = 'bioproject2Genbank')
+    parser.add_argument('infile', action='store',
+                        help='File containing the NCBI BioProject IDs')
+    parser.add_argument('email', action='store',
+                        help='Email (needed by NCBI Entrez)')        
+
+    parser.add_argument('--working-dir', action='store',
+                        default='.',
+                        dest='wdir',
+                        help='Working directory')
+    parser.add_argument('-v', action='count',
+                        default=0,
+                        help='Increase verbosity level')
+    parser.add_argument('--version', action='version',
+                        version='%(prog)s '+__version__)
+
+    return parser.parse_args()
+    
+if __name__ == "__main__":
+    options = getOptions()
+
+    # Log setup
+    logger = logging.getLogger()
+
+    ch = logging.StreamHandler()
+    if options.v == 0:
+        ch.setLevel(logging.INFO)
+    elif options.v >= 1:
+        ch.setLevel(logging.DEBUG)
+    formatter = ColorFormatter('%(asctime)s - $COLOR%(message)s$RESET','%H:%M:%S')
+    ch.setFormatter(formatter)
+    logger.addHandler(ch)
+
+    logger.setLevel(logging.DEBUG)
+
+    fh = handlers.RotatingFileHandler('bioproject2Genbank.log', maxBytes=2000000)
+    formatter = logging.Formatter('%(asctime)s - %(name)s - [%(levelname)s] - %(message)s',
+                            '%Y-%m-%d %H:%M:%S')
+    fh.setFormatter(formatter)
+    logger.addHandler(fh)
+   
+    bids = set()
+    for l in open(options.infile):
+        bids.add( l.strip() )
+
+    Entrez.email = options.email
+
+    # Start
+    logger.info('Searching %d entries in NCBI BioProject'%(len(bids)))
+
+    i = 0
+    for bid in bids:
+        i += 1
+
+        logger.info('(%d/%d) Fetching NCBI Bioproject %s'%(
+                                                        i,
+                                                        len(bids),
+                                                        bid))
+        
+        # First, get a name from the taxonomy
+        # We assume that there should be a link to taxonomy
+        try:
+            h = Entrez.elink(dbfrom='BioProject', id=bid,
+                             linkname="BioProject_taxonomy")
+            r = Entrez.read( h )
+            taxid = r[0]['LinkSetDb'][0]['Link'][0]['Id']
+            h = Entrez.efetch(db='taxonomy', id=taxid)
+            r = Entrez.read( h )
+            name = r[0]['ScientificName']
+            # Generate a fake NCBI FTP name
+            ncbiname = name.replace(' ', '_') + '_uid' + bid
+        except Exception as e:
+            logger.warning('Could not fetch taxonomy info for %s'%bid)
+            logger.warning(e)
+            continue
+
+        # Second, fetch all the available genbanks
+        try:
+            h = Entrez.elink(dbfrom='BioProject', id=bid,
+                             linkname="BioProject_nuccore")
+            r = Entrez.read( h )
+            gbs = r[0]['LinkSetDb'][0]['Link']
+
+            if len(gbs) == 0:
+                logger.warning('No GenBank entries available for %s'%name)
+                continue
+
+            try:
+                os.mkdir( os.path.join( options.wdir, ncbiname ) )
+            except:
+                pass
+
+            j = 0
+            for link in gbs:
+                j += 1
+
+                gbid = link['Id']
+
+                logger.debug('\t(%d/%d) Fetching GenBank entry %s'%(j,
+                                                            len(gbs),
+                                                            gbid))
+                
+                # Avoid to download again a file that is already there
+                # We are assuming that if a file is there the download was completed
+                if '%s.gbk.sha256'%gbid in os.listdir(
+                                            os.path.join( options.wdir, ncbiname)):
+                    logger.debug('\tSkipping %s, already downloaded'%gbid)
+                    continue
+
+                h = Entrez.efetch(db='nuccore', id=gbid, rettype='gb')
+                f = open( os.path.join( options.wdir, ncbiname, '%s.gbk'%gbid ) , 'w')
+                f.write( ''.join(h.readlines()) )
+                f.close()
+                fhash = hashfile(open(os.path.join( options.wdir, ncbiname, '%s.gbk'%gbid) ))
+                f = open( os.path.join( options.wdir, ncbiname, '%s.gbk.sha256'%gbid ) , 'w')
+                f.write( '%s  %s'%(fhash, '%s.gbk'%gbid) )
+                f.close()
+        except Exception as e:
+            logger.warning('Could not fetch GenBank info for %s'%bid)
+            logger.warning(e)
+            continue
+
