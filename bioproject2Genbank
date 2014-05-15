@@ -6,6 +6,8 @@ import logging
 from logging import handlers
 
 from Bio import Entrez
+from Bio import SeqIO
+from Bio.Seq import UnknownSeq
 
 from bacteria2go.colorlog import ColorFormatter
 from bacteria2go import __version__
@@ -138,6 +140,22 @@ if __name__ == "__main__":
                 f = open( os.path.join( options.wdir, ncbiname, '%s.gbk'%gbid ) , 'w')
                 f.write( ''.join(h.readlines()) )
                 f.close()
+                
+                # Check if this genbank file has actual sequences
+                # Otherwise, fetch the fasta file and add its sequence to the genbank
+                s = SeqIO.read( os.path.join( options.wdir, ncbiname, '%s.gbk'%gbid ),
+                        'genbank')
+                if type(s.seq) == UnknownSeq:
+                    logger.warning('\tNo sequence found for %s, trying with FASTA'%gbid)
+                    s1 = SeqIO.read(Entrez.efetch(db='nuccore', id=gbid, rettype='fasta'),
+                            'fasta')
+                    
+                    if type(s1.seq) == UnknownSeq:
+                        logger.error('\tNo sequence for %s! You should discard this genome'%gbid)
+                    
+                    # Give the genbank its actual sequence
+                    s.seq  = s1.seq
+                
                 fhash = hashfile(open(os.path.join( options.wdir, ncbiname, '%s.gbk'%gbid) ))
                 f = open( os.path.join( options.wdir, ncbiname, '%s.gbk.sha256'%gbid ) , 'w')
                 f.write( '%s  %s'%(fhash, '%s.gbk'%gbid) )
