@@ -8,6 +8,7 @@ from logging import handlers
 from Bio import Entrez
 from Bio import SeqIO
 from Bio.Seq import UnknownSeq
+from Bio.Alphabet import DNAAlphabet
 
 from bacteria2go.colorlog import ColorFormatter
 from bacteria2go import __version__
@@ -156,7 +157,12 @@ if __name__ == "__main__":
 
                     # Give the genbank its actual sequence
                     s.seq  = s1.seq
-                
+                    s.seq.alphabet = DNAAlphabet()
+                    
+                    # Write the new genbank!
+                    SeqIO.write(s, os.path.join( options.wdir, ncbiname, '%s.gbk'%gbid ),
+                                'genbank')
+
                 fhash = hashfile(open(os.path.join( options.wdir, ncbiname, '%s.gbk'%gbid) ))
                 f = open( os.path.join( options.wdir, ncbiname, '%s.gbk.sha256'%gbid ) , 'w')
                 f.write( '%s  %s'%(fhash, '%s.gbk'%gbid) )
