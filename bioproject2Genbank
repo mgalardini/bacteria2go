@@ -150,9 +150,10 @@ if __name__ == "__main__":
                     s1 = SeqIO.read(Entrez.efetch(db='nuccore', id=gbid, rettype='fasta'),
                             'fasta')
                     
-                    if type(s1.seq) == UnknownSeq:
+                    if set(str(s1.seq)) == set(['N']):
                         logger.error('\tNo sequence for %s! You should discard this genome'%gbid)
-                    
+                        raise ValueError('No Sequence available, just Ns')
+
                     # Give the genbank its actual sequence
                     s.seq  = s1.seq
                 
