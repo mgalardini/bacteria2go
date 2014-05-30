@@ -2,13 +2,18 @@
 
 import sys
 import os
-from Bio import SeqIO
 
-if len(sys.argv) < 2:
-    sys.stderr.write('USAGE: genome2Author FTPDIR\n')
+from Bio import SeqIO
+from Bio import Entrez
+
+if len(sys.argv) < 3:
+    sys.stderr.write('USAGE: genome2Author FTPDIR EMAIL\n')
     sys.exit(65)
 
 indir = sys.argv[1]
+email = sys.argv[2]
+
+Entrez.email = email
 
 auth = {}
 
@@ -18,14 +23,36 @@ for g in filter(lambda x: os.path.isdir(os.path.join(indir, x)), os.listdir(indi
         sys.stderr.write('\t%s\n'%f)
         s = SeqIO.read(os.path.join(indir, g, f), 'genbank')
         for ref in s.annotations['references']:
-            for a in ref.authors.split():
-                if a == 'and':
-                    continue
-                a = a.rstrip(',').strip()
-                auth[a] = auth.get(a, set())
-                auth[a].add( g )
+            if 'Direct Submission' not in ref.title:
+                continue
+
+            centre = ')'.join(ref.journal.split(')')[1:])
+            
+            auth[centre] = auth.get(centre, set())
+            auth[centre].add(g)            
+
+        # One genbank file is sufficient to get the right information
+        break
+
+done = set()
 
 for a in sorted(auth, key=lambda x: len(auth[x]))[::-1]:
-    print(a)
-    for g in auth[a]:
-        print('\t%s'%g)
+    for g in sorted(auth[a]):
+        if g in done:
+            continue
+
+        done.add(g)
+
+        bid = g.split('_uid')[-1]
+
+        h = Entrez.elink(dbfrom='BioProject', id=bid,
+                         linkname="BioProject_taxonomy")
+        r = Entrez.read(h)
+
+        taxid = r[0]['LinkSetDb'][0]['Link'][0]['Id']
+        h = Entrez.efetch(db='taxonomy', id=taxid)
+        r = Entrez.read(h)
+
+        n = r[0]['ScientificName']
+
+        print('\t'.join([n, bid, a.strip()]))
