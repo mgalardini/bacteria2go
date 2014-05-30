@@ -27,6 +27,7 @@ Scripts description
     * Uses the Entrez interface to download taxonomy data for each strain
     * Outputs summary and taxonomy data in JSON format
 * ftp2Literature: fetches the pubmed entries associated with a certain bacterial species
+* genome2Author: look for most recurring submitters in genbank files from NCBI
 * ftp2Complete: Fetch the complete genomes from a NCBI ftp directory
 * ftp2Metadata: Fetch metadata from NCBI BioProject and update JSON files
 * ftp216s: Extract the 16s from NCBI FTP genbanks

@@ -1,0 +1,31 @@
+#!/usr/bin/env python
+
+import sys
+import os
+from Bio import SeqIO
+
+if len(sys.argv) < 2:
+    sys.stderr.write('USAGE: genome2Author FTPDIR\n')
+    sys.exit(65)
+
+indir = sys.argv[1]
+
+auth = {}
+
+for g in filter(lambda x: os.path.isdir(os.path.join(indir, x)), os.listdir(indir)):
+    sys.stderr.write('%s\n'%g)
+    for f in filter(lambda x: x.endswith('.gbk'), os.listdir(os.path.join(indir, g))):
+        sys.stderr.write('\t%s\n'%f)
+        s = SeqIO.read(os.path.join(indir, g, f), 'genbank')
+        for ref in s.annotations['references']:
+            for a in ref.authors.split():
+                if a == 'and':
+                    continue
+                a = a.rstrip(',').strip()
+                auth[a] = auth.get(a, set())
+                auth[a].add( g )
+
+for a in sorted(auth, key=lambda x: len(auth[x]))[::-1]:
+    print(a)
+    for g in auth[a]:
+        print('\t%s'%g)
