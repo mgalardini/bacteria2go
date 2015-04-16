@@ -47,6 +47,9 @@ def getOptions():
                         default=False,
                         dest='force',
                         help='Force download of existing files')
+    parser.add_argument('--complete', action='store_true',
+                        default=False,
+                        help='Only complete genomes')
 
     parser.add_argument('--working-dir', action='store',
                         default='.',
@@ -124,14 +127,19 @@ if __name__ == "__main__":
     # using the uid at the end of the ftp directory name
     strains = {}
 
+    if not options.complete:
+        strains_download = complete.union(draft)
+    else:
+        strains_download = complete
+
     logger.info('Collecting taxonomic information on the %d genomes'%
-                (len(complete.union(draft))))
+                (len(strains_download)))
     i = 0
-    for strain in complete.union(draft):
+    for strain in strains_download:
         i += 1
         logger.info('(%d/%d) Fetching NCBI taxonomy for %s'%(
                                                             i,
-                                         len(complete.union(draft)),
+                                              len(strains_download),
                                                             strain))
         
         strains[strain] = Strain(strain)
@@ -214,124 +222,129 @@ if __name__ == "__main__":
         f.write('DONE\n')
         f.close()
 
-    # Draft genome are more complicated, since thare may be zipped genbanks
-    # Or multiple similar genbank, but one without annotations
-    logger.info('Collecting the %d draft genomes'%(len(draft)))
-    i = 0
-    # Strains to be removed due to insufficient annotation
-    remove = set()
-    for strain in draft:
-        i += 1
-        logger.info('(%d/%d) Fetching the genome files for %s'%(
-                                                            i,
-                                                            len(draft),
-                                                            strain))
-        
-        # Already downloaded?
-        if strain in os.listdir(options.wdir):
-            spath = os.path.join(options.wdir, strain)
-            if 'DONE' in os.listdir(spath) and not options.force:
-                logger.warning('Already downloaded! Skipping...')
+    if not options.complete:
+        # Draft genome are more complicated, since thare may be zipped genbanks
+        # Or multiple similar genbank, but one without annotations
+        logger.info('Collecting the %d draft genomes'%(len(draft)))
+        i = 0
+        # Strains to be removed due to insufficient annotation
+        remove = set()
+        for strain in draft:
+            i += 1
+            logger.info('(%d/%d) Fetching the genome files for %s'%(
+                                                                i,
+                                                                len(draft),
+                                                                strain))
+            
+            # Already downloaded?
+            if strain in os.listdir(options.wdir):
+                spath = os.path.join(options.wdir, strain)
+                if 'DONE' in os.listdir(spath) and not options.force:
+                    logger.warning('Already downloaded! Skipping...')
+                    continue
+
+            # Is there any faa.tgz (meaning that there is some annotation)?
+            ftgzpath = os.path.join(options.wdir, 'ftgzlist.txt')
+            # Here we can expect failures if no faa.tgz files are present
+            runCmd(listfaatgz%('%s%s/'%(durl, strain), ftgzpath), True)
+            
+            faatgz = set()
+            for l in open(ftgzpath):
+                l = l.strip()
+                faatgz.add(l.replace('.faa.tgz', ''))    
+            os.remove(ftgzpath)
+
+            # Check also the presence of frn.tgz files (RNA features)
+            rtgzpath = os.path.join(options.wdir, 'rtgzlist.txt')
+            runCmd(listfrntgz%('%s%s/'%(durl, strain), rtgzpath), True)
+
+            frntgz = set()
+            for l in open(rtgzpath):
+                l = l.strip()
+                frntgz.add(l.replace('.frn.tgz', ''))    
+            os.remove(rtgzpath)
+
+            if len(faatgz.union(frntgz)) == 0:
+                logger.warning('(%d/%d) No annotation available for %s'%(
+                                                                i,
+                                                                len(draft),
+                                                                strain))
+                remove.add(strain)
                 continue
 
-        # Is there any faa.tgz (meaning that there is some annotation)?
-        ftgzpath = os.path.join(options.wdir, 'ftgzlist.txt')
-        # Here we can expect failures if no faa.tgz files are present
-        runCmd(listfaatgz%('%s%s/'%(durl, strain), ftgzpath), True)
-        
-        faatgz = set()
-        for l in open(ftgzpath):
-            l = l.strip()
-            faatgz.add(l.replace('.faa.tgz', ''))    
-        os.remove(ftgzpath)
-
-        # Check also the presence of frn.tgz files (RNA features)
-        rtgzpath = os.path.join(options.wdir, 'rtgzlist.txt')
-        runCmd(listfrntgz%('%s%s/'%(durl, strain), rtgzpath), True)
-
-        frntgz = set()
-        for l in open(rtgzpath):
-            l = l.strip()
-            frntgz.add(l.replace('.frn.tgz', ''))    
-        os.remove(rtgzpath)
-
-        if len(faatgz.union(frntgz)) == 0:
-            logger.warning('(%d/%d) No annotation available for %s'%(
-                                                            i,
-                                                            len(draft),
-                                                            strain))
-            remove.add(strain)
-            continue
-
-        # Fetch the gbz.tgz list, then keep only those w/ annotations
-        gtgzpath = os.path.join(options.wdir, 'gtgzlist.txt')
-        if not runCmd(listgbktgz%('%s%s/'%(durl, strain), gtgzpath)):
-            logger.error('Could not fetch the gbk.tgz files list')
-            sys.exit(1)
-
-        if len(faatgz) > 0:
-            ftgzpath = os.path.join(options.wdir, 'ftgzlist.txt')
-            if not runCmd(listfaatgz%('%s%s/'%(durl, strain), ftgzpath)):
-                logger.error('Could not fetch the faa.tgz files list')
+            # Fetch the gbz.tgz list, then keep only those w/ annotations
+            gtgzpath = os.path.join(options.wdir, 'gtgzlist.txt')
+            if not runCmd(listgbktgz%('%s%s/'%(durl, strain), gtgzpath)):
+                logger.error('Could not fetch the gbk.tgz files list')
                 sys.exit(1)
-        
-        if len(frntgz) > 0:
-            rtgzpath = os.path.join(options.wdir, 'rtgzlist.txt')
-            if not runCmd(listfrntgz%('%s%s/'%(durl, strain), rtgzpath)):
-                logger.error('Could not fetch the frn.tgz files list')
-                sys.exit(1)
-        
-        spath = os.path.join(options.wdir, strain)
-        try:
-            os.mkdir(spath)
-        except:
-            pass
 
-        for dfile in [gtgzpath, ftgzpath, rtgzpath]:
-            if not os.path.exists(dfile):continue
-            for l in open(dfile):
-                l = l.strip()
-                if dfile == gtgzpath:
-                    if l.replace('.gbk.tgz', '') not in faatgz.union(frntgz):
-                        logger.debug('Skipping unannotated genbank file %s'%l)
-                        continue
+            if len(faatgz) > 0:
+                ftgzpath = os.path.join(options.wdir, 'ftgzlist.txt')
+                if not runCmd(listfaatgz%('%s%s/'%(durl, strain), ftgzpath)):
+                    logger.error('Could not fetch the faa.tgz files list')
+                    sys.exit(1)
             
-                logger.debug('Fetching %s'%l)
-
-                fpath = os.path.join(spath, l)
-                if not runCmd(fetchfile%('%s%s/%s'%(durl, strain, l), fpath)):
-                    logger.error('Could not fetch %s'%l)
+            if len(frntgz) > 0:
+                rtgzpath = os.path.join(options.wdir, 'rtgzlist.txt')
+                if not runCmd(listfrntgz%('%s%s/'%(durl, strain), rtgzpath)):
+                    logger.error('Could not fetch the frn.tgz files list')
                     sys.exit(1)
-                # Uncompress the file, then remove the archive
-                logger.debug('Uncompressing %s'%l)
-                if not runCmd(uncompress%(fpath, spath)):
-                    logger.error('Could not uncompress %s'%fpath)
-                    sys.exit(1)
-                os.remove(fpath)
+            
+            spath = os.path.join(options.wdir, strain)
+            try:
+                os.mkdir(spath)
+            except:
+                pass
 
-        try:
-            os.remove(gtgzpath)
-            os.remove(ftgzpath)
-            os.remove(rtgzpath)
-        except:
-            pass
-        
-        # Drop a file that tells us that all the files have been downloaded
-        f = open(os.path.join(spath, 'DONE'), 'w')
-        f.write('DONE\n')
-        f.close()
+            for dfile in [gtgzpath, ftgzpath, rtgzpath]:
+                if not os.path.exists(dfile):continue
+                for l in open(dfile):
+                    l = l.strip()
+                    if dfile == gtgzpath:
+                        if l.replace('.gbk.tgz', '') not in faatgz.union(frntgz):
+                            logger.debug('Skipping unannotated genbank file %s'%l)
+                            continue
+                
+                    logger.debug('Fetching %s'%l)
 
-    for strain in remove:
-        draft.remove(strain)
+                    fpath = os.path.join(spath, l)
+                    if not runCmd(fetchfile%('%s%s/%s'%(durl, strain, l), fpath)):
+                        logger.error('Could not fetch %s'%l)
+                        sys.exit(1)
+                    # Uncompress the file, then remove the archive
+                    logger.debug('Uncompressing %s'%l)
+                    if not runCmd(uncompress%(fpath, spath)):
+                        logger.error('Could not uncompress %s'%fpath)
+                        sys.exit(1)
+                    os.remove(fpath)
+
+            try:
+                os.remove(gtgzpath)
+                os.remove(ftgzpath)
+                os.remove(rtgzpath)
+            except:
+                pass
+            
+            # Drop a file that tells us that all the files have been downloaded
+            f = open(os.path.join(spath, 'DONE'), 'w')
+            f.write('DONE\n')
+            f.close()
+
+        for strain in remove:
+            draft.remove(strain)
 
     # Compute statistics, then save a JSON file
     logging.info('Computing statistics and writing summary files')
     i = 0
-    for strain in complete.union(draft):
+    if not options.complete:
+        strains_download = complete.union(draft)
+    else:
+        strains_download = complete
+    for strain in strains:
         i += 1
         logger.info('(%d/%d) Computing statistics for %s'%(
                                                             i,
-                                         len(complete.union(draft)),
+                                               len(strains_download),
                                                             strain))
         
         ostrain = strains[strain]
